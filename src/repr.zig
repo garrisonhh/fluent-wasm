@@ -1,12 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const com = @import("common");
-const writing = @import("writing.zig");
+const write_wasm = @import("write_wasm.zig");
 
-pub const Global = com.Ref(.wasm_global, 64);
-pub const Local = com.Ref(.wasm_local, 64);
-pub const FuncRef = com.Ref(.wasm_funcref, 64);
-pub const FlowRef = com.Ref(.wasm_controlflow, 64);
+pub const Global = com.Ref(.wasm_global, 32);
+pub const Local = com.Ref(.wasm_local, 32);
+pub const FuncRef = com.Ref(.wasm_funcref, 32);
+pub const FlowRef = com.Ref(.wasm_controlflow, 32);
 
 pub const Bytes = enum {
     @"8",
@@ -33,7 +33,7 @@ pub const Type = enum {
     f64,
     funcref,
 
-    pub fn bytes(self: @This()) Bytes {
+    pub fn bits(self: @This()) Bytes {
         return switch (self) {
             .i32, .u32, .f32 => .@"32",
             .i64, .u64, .f64, .funcref => .@"64",
@@ -103,25 +103,25 @@ pub const Op = union(enum) {
     store: Store,
 
     // comparison operators
-    eqz: [2]Local,
-    eq: [2]Local,
-    ne: [2]Local,
-    lt: [2]Local,
-    gt: [2]Local,
-    le: [2]Local,
-    ge: [2]Local,
+    eqz: Type,
+    eq: Type,
+    ne: Type,
+    lt: Type,
+    gt: Type,
+    le: Type,
+    ge: Type,
 
     // arithmetic operators
-    add: [2]Local,
-    sub: [2]Local,
-    mul: [2]Local,
-    div: [2]Local,
-    rem: [2]Local,
+    add: Type,
+    sub: Type,
+    mul: Type,
+    div: Type,
+    rem: Type,
 
     // logic
-    @"and": [2]Local,
-    @"or": [2]Local,
-    xor: [2]Local,
+    @"and",
+    @"or",
+    xor,
 
     // bit twiddling
     // ctz: Local,
@@ -161,7 +161,7 @@ pub const Module = struct {
         self.functions.deinit(ally);
     }
 
-    pub const write = writing.write;
+    pub const writeWasm = write_wasm.write;
 
     /// create a new function
     /// supply a name if this function should be exported

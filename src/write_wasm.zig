@@ -6,6 +6,7 @@ const repr = @import("repr.zig");
 const Module = repr.Module;
 const Function = repr.Function;
 const Op = repr.Op;
+const Local = repr.Local;
 const bytecode = @import("bytecode.zig");
 const RawOpcode = bytecode.RawOpcode;
 
@@ -52,6 +53,13 @@ const ValType = enum(u8) {
             => |tag| std.enums.nameCast(ValType, tag),
         };
     }
+};
+
+const ExportDesc = enum(u8) {
+    func = 0,
+    table = 1,
+    mem = 2,
+    global = 3,
 };
 
 // utils =======================================================================
@@ -128,7 +136,12 @@ fn writeEnum(
     value: E,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    try writer.writeIntLittle(u8, @intFromEnum(value));
+    try writer.writeByte(@intFromEnum(value));
+}
+
+fn writeName(name: []const u8, writer: anytype) @TypeOf(writer).Error!void {
+    try writeInt(u32, @as(u32, @intCast(name.len)), writer);
+    try writer.writeAll(name);
 }
 
 fn writeSectionHeader(
@@ -197,8 +210,39 @@ fn writeFunctions(
 
     var funcs = module.functions.iterator();
     while (funcs.next()) |func| {
-        const index = func.ref.index;
-        try writeInt(u32, @as(u32, @intCast(index)), writer);
+        try writeInt(u32, func.ref.index, writer);
+    }
+}
+
+fn countExports(module: *const Module) u32 {
+    var num_exports: u32 = 0;
+
+    var func_iter = module.functions.iterator();
+    while (func_iter.next()) |func| {
+        if (func.name) |_| {
+            num_exports += 1;
+        }
+    }
+
+    return num_exports;
+}
+
+fn writeExports(
+    module: *const Module,
+    writer: anytype,
+) @TypeOf(writer).Error!void {
+    const num_exports = countExports(module);
+    if (num_exports == 0) return;
+
+    try writeInt(u32, num_exports, writer);
+
+    var func_iter = module.functions.iterator();
+    while (func_iter.next()) |func| {
+        if (func.name) |name| {
+            try writeName(name, writer);
+            try writeEnum(ExportDesc, .func, writer);
+            try writeInt(u32, func.ref.index, writer);
+        }
     }
 }
 
@@ -213,6 +257,7 @@ fn writeOp(
 ) @TypeOf(writer).Error!void {
     _ = function;
     switch (op) {
+        // operators with no args
         inline .@"unreachable",
         .nop,
         .@"return",
@@ -220,9 +265,46 @@ fn writeOp(
             try writeRawOp(std.enums.nameCast(RawOpcode, tag), writer);
         },
 
+        // operators which extrapolate from a type
+        .eq,
+        .ne,
+        .lt,
+        .gt,
+        .le,
+        .ge,
+        .add,
+        .sub,
+        .mul,
+        => |t| {
+            const raw_op = switch (op) {
+                inline else => |_, opcode| switch (t) {
+                    inline .u32, .u64 => |type_tag| std.meta.stringToEnum(
+                        RawOpcode,
+                        "i" ++ @tagName(comptime type_tag.bits()) ++
+                            "." ++ @tagName(opcode),
+                    ).?,
+
+                    inline .i32, .i64, .f32, .f64 => |type_tag| std.meta.stringToEnum(
+                        RawOpcode,
+                        @tagName(type_tag) ++ "." ++ @tagName(opcode),
+                    ).?,
+
+                    else => unreachable,
+                },
+            };
+
+            try writeRawOp(raw_op, writer);
+        },
+
+        .@"local.get", .@"local.set" => |local| {
+            const raw_op = std.meta.stringToEnum(RawOpcode, @tagName(op)).?;
+            try writeRawOp(raw_op, writer);
+            try writeInt(u32, local.index, writer);
+        },
+
         else => |tag| {
             std.debug.panic("TODO write op {s}", .{@tagName(tag)});
-        }
+        },
     }
 }
 
@@ -270,5 +352,6 @@ pub fn write(
     try writer.writeIntLittle(u32, wasm_version);
     try writeSection(module, writer, .type, writeTypes);
     try writeSection(module, writer, .function, writeFunctions);
+    try writeSection(module, writer, .@"export", writeExports);
     try writeSection(module, writer, .code, writeCode);
 }
