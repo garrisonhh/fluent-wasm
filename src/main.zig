@@ -1,4 +1,4 @@
-const std = @import("std");
+//! wasm module
 
-pub fn main() !void {
-}
+pub usingnamespace @import("bytecode.zig");
+pub usingnamespace @import("repr.zig");

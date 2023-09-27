@@ -1,0 +1,10 @@
+.{
+    .name = "wasm-encoder",
+    .version = "0.0.1",
+    .dependencies = .{
+        .zighh = .{
+            .url = "https://github.com/garrisonhh/zighh/tarball/eeaf29aa2afdc99b75dd3bccb25307e5a1dfd4cc",
+            .hash = "122079ec8ec7756b897fc7dd9162cf211b785d649a07d16c3352d10bf46ec34a596b",
+        },
+    },
+}
