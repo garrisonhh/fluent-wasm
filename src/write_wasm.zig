@@ -7,8 +7,7 @@ const Module = repr.Module;
 const Function = repr.Function;
 const Op = repr.Op;
 const Local = repr.Local;
-const bytecode = @import("bytecode.zig");
-const RawOpcode = bytecode.RawOpcode;
+const RawOpcode = @import("raw_opcodes.zig").RawOpcode;
 
 const wasm_magic_bytes: [4]u8 = .{0} ++ "asm".*;
 const wasm_version: u32 = 0x1;
