@@ -1,10 +1,14 @@
 .{
-    .name = "wasm-encoder",
+    .name = "fluent-wasm",
     .version = "0.0.1",
     .dependencies = .{
         .zighh = .{
-            .url = "https://github.com/garrisonhh/zighh/tarball/eeaf29aa2afdc99b75dd3bccb25307e5a1dfd4cc",
-            .hash = "122079ec8ec7756b897fc7dd9162cf211b785d649a07d16c3352d10bf46ec34a596b",
+            .url = "https://github.com/garrisonhh/zighh/tarball/bf935186e5a25eb3dd915b23cbe27449bbeb10fb",
+            .hash = "1220ff4d65e195a5932d15e2486c058c99a494445ae3eca398f2fc3a0807317b36c3",
+        },
+        .wasm3 = .{
+            .url = "https://github.com/garrisonhh/wasm3.zig/tarball/b68b7dbaf984a320826bc8df2ef8c5c1e9893508",
+            .hash = "1220769df40ca2f559abc941c12aab6a71637ed817fc8740f8c905b32fe4353691d6",
         },
     },
 }

@@ -2,11 +2,11 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const repr = @import("repr.zig");
-const Module = repr.Module;
-const Function = repr.Function;
-const Op = repr.Op;
-const Local = repr.Local;
+const wasm = @import("wasm.zig");
+const Module = wasm.Module;
+const Function = wasm.Function;
+const Op = wasm.Op;
+const Local = wasm.Local;
 const RawOpcode = @import("raw_opcodes.zig").RawOpcode;
 
 const wasm_magic_bytes: [4]u8 = .{0} ++ "asm".*;
@@ -39,18 +39,8 @@ const ValType = enum(u8) {
     funcref = 0x70,
     externref = 0x6F,
 
-    fn ofReprType(t: repr.Type) ValType {
-        return switch (t) {
-            .u32 => .i32,
-            .u64 => .i64,
-
-            inline .i32,
-            .i64,
-            .f32,
-            .f64,
-            .funcref,
-            => |tag| std.enums.nameCast(ValType, tag),
-        };
+    fn ofWasmType(t: wasm.Type) ValType {
+        return std.meta.stringToEnum(ValType, @tagName(t)).?;
     }
 };
 
@@ -188,13 +178,13 @@ fn writeTypes(
 
         try writeInt(u32, @as(u32, @intCast(func.params.len)), writer);
         for (func.params) |param| {
-            const vt = ValType.ofReprType(func.typeOf(param));
+            const vt = ValType.ofWasmType(func.typeOf(param));
             try writeEnum(ValType, vt, writer);
         }
 
         try writeInt(u32, @as(u32, @intCast(func.returns.len)), writer);
         for (func.returns) |t| {
-            try writeEnum(ValType, ValType.ofReprType(t), writer);
+            try writeEnum(ValType, ValType.ofWasmType(t), writer);
         }
     }
 }
@@ -277,18 +267,10 @@ fn writeOp(
         => |t| {
             const raw_op = switch (op) {
                 inline else => |_, opcode| switch (t) {
-                    inline .u32, .u64 => |type_tag| std.meta.stringToEnum(
-                        RawOpcode,
-                        "i" ++ @tagName(comptime type_tag.bits()) ++
-                            "." ++ @tagName(opcode),
-                    ).?,
-
                     inline .i32, .i64, .f32, .f64 => |type_tag| std.meta.stringToEnum(
                         RawOpcode,
                         @tagName(type_tag) ++ "." ++ @tagName(opcode),
                     ).?,
-
-                    else => unreachable,
                 },
             };
 
@@ -315,7 +297,7 @@ fn writeFunctionCode(
     var locals = function.locals.iterator();
     while (locals.next()) |t| {
         try writeInt(u32, 1, writer);
-        try writeEnum(ValType, ValType.ofReprType(t.*), writer);
+        try writeEnum(ValType, ValType.ofWasmType(t.*), writer);
     }
 
     for (function.ops.items) |op| {

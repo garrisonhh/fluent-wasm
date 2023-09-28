@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const com = @import("common");
+const wasm3 = @import("wasm3");
 const write_wasm = @import("write_wasm.zig");
 
 pub const Global = com.Ref(.wasm_global, 32);
@@ -8,47 +9,30 @@ pub const Local = com.Ref(.wasm_local, 32);
 pub const FuncRef = com.Ref(.wasm_funcref, 32);
 pub const FlowRef = com.Ref(.wasm_controlflow, 32);
 
+pub const Type = wasm3.ValueType;
+pub const Value = wasm3.Value;
+
 pub const Bytes = enum {
     @"8",
     @"16",
     @"32",
     @"64",
 
+    pub fn sizeOf(t: Type) Bytes {
+        return switch (t) {
+            .i32, .f32 => .@"32",
+            .i64, .f64 => .@"64",
+        };
+    }
+
     pub fn format(
-        self: @This(),
+        self: Bytes,
         comptime _: []const u8,
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) @TypeOf(writer).Error!void {
         try writer.print("{s}", .{@tagName(self)});
     }
-};
-
-pub const Type = enum {
-    i32,
-    i64,
-    u32,
-    u64,
-    f32,
-    f64,
-    funcref,
-
-    pub fn bits(self: @This()) Bytes {
-        return switch (self) {
-            .i32, .u32, .f32 => .@"32",
-            .i64, .u64, .f64, .funcref => .@"64",
-        };
-    }
-};
-
-pub const Value = union(Type) {
-    i32: i32,
-    i64: i64,
-    u32: u32,
-    u64: u64,
-    f32: f32,
-    f64: f64,
-    funcref: FuncRef,
 };
 
 pub const Op = union(enum) {
@@ -163,6 +147,16 @@ pub const Module = struct {
 
     pub const writeWasm = write_wasm.write;
 
+    /// compile a module to an allocated array of bytes
+    pub fn compile(self: *const Self, ally: Allocator,) Allocator.Error![]const u8 {
+        var code = std.ArrayList(u8).init(ally);
+        defer code.deinit();
+
+        try self.writeWasm(code.writer());
+
+        return try code.toOwnedSlice();
+    }
+
     /// create a new function
     /// supply a name if this function should be exported
     pub fn function(
@@ -174,6 +168,7 @@ pub const Module = struct {
     ) Allocator.Error!*Function {
         const ref = try self.functions.new(ally);
 
+        // local params
         var locals = Function.LocalMap{};
 
         const param_locals = try ally.alloc(Local, params.len);
@@ -181,9 +176,17 @@ pub const Module = struct {
             slot.* = try locals.put(ally, param_type);
         }
 
+        // name
+        const owned_name: ?[:0]const u8 = if (name) |got| x: {
+            const slice = try ally.allocSentinel(u8, got.len, 0);
+            @memcpy(slice, got);
+            slice[slice.len] = 0;
+            break :x slice;
+        } else null;
+
         try self.functions.set(ally, ref, Function{
             .ref = ref,
-            .name = if (name) |got| try ally.dupe(u8, got) else null,
+            .name = owned_name,
             .params = param_locals,
             .returns = try ally.dupe(Type, returns),
             .locals = locals,
@@ -200,7 +203,7 @@ pub const Function = struct {
 
     ref: FuncRef,
     /// if this isn't null, this function will be exported with this name
-    name: ?[]const u8,
+    name: ?[:0]const u8,
     params: []const Local,
     returns: []const Type,
     locals: LocalMap,
