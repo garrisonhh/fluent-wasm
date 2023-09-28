@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
     const wasm3_mod = wasm3_dep.module("wasm3");
     const wasm3_lib = wasm3_dep.artifact("wasm3");
 
+    // mod + lib
     _ = b.addModule("fluent-wasm", .{
         .source_file = .{ .path = "src/main.zig" },
         .dependencies = &.{
@@ -31,6 +32,7 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // tests
     const unit_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
