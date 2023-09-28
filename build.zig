@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -27,8 +27,7 @@ pub fn build(b: *std.Build) void {
 
     lib.linkLibC();
     lib.linkLibrary(wasm3_lib);
-    lib.include_dirs.appendSlice(wasm3_lib.include_dirs.items) catch
-        @panic("OOM");
+    try lib.include_dirs.appendSlice(wasm3_lib.include_dirs.items);
 
     b.installArtifact(lib);
 
@@ -44,8 +43,7 @@ pub fn build(b: *std.Build) void {
 
     unit_tests.linkLibC();
     unit_tests.linkLibrary(wasm3_lib);
-    unit_tests.include_dirs.appendSlice(wasm3_lib.include_dirs.items) catch
-        @panic("OOM");
+    try unit_tests.include_dirs.appendSlice(wasm3_lib.include_dirs.items);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "run unit tests");
