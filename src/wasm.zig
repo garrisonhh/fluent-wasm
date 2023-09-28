@@ -38,6 +38,13 @@ pub const Bytes = enum {
 pub const Op = union(enum) {
     const Self = @This();
 
+    pub const If = struct {
+        /// TODO represent function type sigs?
+        type: ?Type,
+        if_true: FlowRef,
+        if_false: ?FlowRef,
+    };
+
     pub const Load = struct {
         dst: Local,
         bytes: Bytes,
@@ -56,11 +63,9 @@ pub const Op = union(enum) {
     // basic
     @"unreachable",
     nop,
-    block,
+    @"if": If,
+    // block,
     // loop,
-    @"if",
-    @"else",
-    end,
     // br,
     // br_if,
     // br_table,
@@ -184,12 +189,19 @@ pub const Module = struct {
             break :x slice;
         } else null;
 
+        // entry flow
+        var flows = Function.FlowMap{};
+
+        const entry_ref = try flows.new(ally);
+        flows.set(entry_ref, .{ .ref = entry_ref });
+
         try self.functions.set(ally, ref, Function{
             .ref = ref,
             .name = owned_name,
             .params = param_locals,
             .returns = try ally.dupe(Type, returns),
             .locals = locals,
+            .flows = flows,
         });
 
         return self.functions.get(ref);
@@ -200,6 +212,7 @@ pub const Module = struct {
 pub const Function = struct {
     const Self = @This();
     const LocalMap = com.RefList(Local, Type);
+    const FlowMap = com.RefList(FlowRef, Flow);
 
     ref: FuncRef,
     /// if this isn't null, this function will be exported with this name
@@ -207,14 +220,16 @@ pub const Function = struct {
     params: []const Local,
     returns: []const Type,
     locals: LocalMap,
-    ops: std.ArrayListUnmanaged(Op) = .{},
+    flows: FlowMap,
 
     fn deinit(self: *Self, ally: Allocator) void {
         if (self.name) |name| ally.free(name);
         ally.free(self.params);
         ally.free(self.returns);
         self.locals.deinit(ally);
-        self.ops.deinit(ally);
+        var flow_iter = self.flows.iterator();
+        while (flow_iter.next()) |fl| fl.deinit(ally);
+        self.flows.deinit(ally);
     }
 
     pub fn param(self: *const Self, index: usize) Local {
@@ -227,6 +242,30 @@ pub const Function = struct {
 
     pub fn typeOf(self: *const Self, ref: Local) Type {
         return self.locals.get(ref).*;
+    }
+
+    /// retrieve the entry flow
+    pub fn entry(self: *const Self) *Flow {
+        return self.flows.get(.{ .index = 0 });
+    }
+
+    /// start a new flow
+    pub fn flow(self: *Self, ally: Allocator) Allocator.Error!*Flow {
+        const ref = try self.flows.new(ally);
+        self.flows.set(ref, .{ .ref = ref });
+        return self.flows.get(ref);
+    }
+};
+
+/// use this to add ops to a function
+pub const Flow = struct {
+    const Self = @This();
+
+    ref: FlowRef,
+    ops: std.ArrayListUnmanaged(Op) = .{},
+
+    pub fn deinit(self: *Self, ally: Allocator) void {
+        self.ops.deinit(ally);
     }
 
     pub fn op(self: *Self, ally: Allocator, o: Op) Allocator.Error!void {

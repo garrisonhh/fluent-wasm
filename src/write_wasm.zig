@@ -7,12 +7,14 @@ const Module = wasm.Module;
 const Function = wasm.Function;
 const Op = wasm.Op;
 const Local = wasm.Local;
+const FlowRef = wasm.FlowRef;
 const RawOpcode = @import("raw_opcodes.zig").RawOpcode;
 
 const wasm_magic_bytes: [4]u8 = .{0} ++ "asm".*;
 const wasm_version: u32 = 0x1;
 
 const functype: u8 = 0x60;
+const blocktype_empty: u8 = 0x40;
 
 const Section = enum(u8) {
     custom = 0,
@@ -244,7 +246,6 @@ fn writeOp(
     op: Op,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    _ = function;
     switch (op) {
         // operators with no args
         inline .@"unreachable",
@@ -252,6 +253,31 @@ fn writeOp(
         .@"return",
         => |_, tag| {
             try writeRawOp(std.enums.nameCast(RawOpcode, tag), writer);
+        },
+
+        .@"if" => |meta| {
+            try writeRawOp(.@"if", writer);
+
+            if (meta.type) |t| {
+                try writeEnum(ValType, ValType.ofWasmType(t), writer);
+            } else {
+                try writer.writeByte(blocktype_empty);
+            }
+
+            try writeFlowCode(function, meta.if_true, writer);
+
+            if (meta.if_false) |if_false| {
+                try writeRawOp(.@"else", writer);
+                try writeFlowCode(function, if_false, writer);
+            }
+
+            try writeRawOp(.end, writer);
+        },
+
+        .@"local.get", .@"local.set" => |local| {
+            const raw_op = std.meta.stringToEnum(RawOpcode, @tagName(op)).?;
+            try writeRawOp(raw_op, writer);
+            try writeInt(u32, local.index, writer);
         },
 
         // operators which extrapolate from a type
@@ -277,15 +303,20 @@ fn writeOp(
             try writeRawOp(raw_op, writer);
         },
 
-        .@"local.get", .@"local.set" => |local| {
-            const raw_op = std.meta.stringToEnum(RawOpcode, @tagName(op)).?;
-            try writeRawOp(raw_op, writer);
-            try writeInt(u32, local.index, writer);
-        },
-
         else => |tag| {
             std.debug.panic("TODO write op {s}", .{@tagName(tag)});
         },
+    }
+}
+
+fn writeFlowCode(
+    function: *const Function,
+    flow: FlowRef,
+    writer: anytype,
+) @TypeOf(writer).Error!void {
+    const ops = function.flows.get(flow).ops.items;
+    for (ops) |op| {
+        try writeOp(function, op, writer);
     }
 }
 
@@ -293,6 +324,7 @@ fn writeFunctionCode(
     function: *const Function,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
+    // locals
     try writeInt(u32, @as(u32, @intCast(function.locals.count())), writer);
     var locals = function.locals.iterator();
     while (locals.next()) |t| {
@@ -300,10 +332,8 @@ fn writeFunctionCode(
         try writeEnum(ValType, ValType.ofWasmType(t.*), writer);
     }
 
-    for (function.ops.items) |op| {
-        try writeOp(function, op, writer);
-    }
-
+    // structured instrs
+    try writeFlowCode(function, function.entry().ref, writer);
     try writeRawOp(.end, writer);
 }
 
