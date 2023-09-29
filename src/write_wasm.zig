@@ -325,8 +325,15 @@ fn writeFunctionCode(
     writer: anytype,
 ) @TypeOf(writer).Error!void {
     // locals
-    try writeInt(u32, @as(u32, @intCast(function.locals.count())), writer);
+    const total_locals = function.locals.count();
+    const num_params = function.params.len;
+    const real_locals = total_locals - num_params;
+
     var locals = function.locals.iterator();
+    // discard param locals
+    for (0..num_params) |_| _ = locals.next();
+
+    try writeInt(u32, @as(u32, @intCast(real_locals)), writer);
     while (locals.next()) |t| {
         try writeInt(u32, 1, writer);
         try writeEnum(ValType, ValType.ofWasmType(t.*), writer);

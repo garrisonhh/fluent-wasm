@@ -37,6 +37,7 @@ pub const Bytes = enum {
 
 pub const Op = union(enum) {
     const Self = @This();
+    pub const Code = std.meta.Tag(Self);
 
     pub const If = struct {
         /// TODO represent function type sigs?

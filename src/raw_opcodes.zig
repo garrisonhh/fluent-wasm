@@ -1,3 +1,4 @@
+/// TODO use std.wasm?
 /// values are the actual bytecode values
 pub const RawOpcode = enum(u8) {
     @"unreachable" = 0x0,
