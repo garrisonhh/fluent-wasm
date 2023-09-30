@@ -1,4 +1,3 @@
-pub usingnamespace @import("raw_opcodes.zig");
 pub usingnamespace @import("wasm.zig");
 pub usingnamespace @import("hooks.zig");
 
@@ -73,8 +72,8 @@ const HomogenousBinaryOpTest = struct {
         const func = try module.function(ally, func_name, &.{ t, t }, &.{t});
 
         const entry = func.entry();
-        try entry.op(ally, .{ .@"local.get" = func.param(0) });
-        try entry.op(ally, .{ .@"local.get" = func.param(1) });
+        try entry.op(ally, .{ .local_get = func.param(0) });
+        try entry.op(ally, .{ .local_get = func.param(1) });
 
         const bin_op = switch (self.opcode) {
             inline else => |tag| o: {
@@ -165,6 +164,7 @@ test HomogenousBinaryOpTest {
     // NOTE wasm3 executes an illegal instruction on integer overflow. I suppose
     // this is undefined behavior in the c language, maybe I can zig translate-c
     // the offending function in wasm3.zig?
+
     const suites = [_]HomogenousBinaryOpTest{
         suite(.add, &.{
             case(.i32, 0, 0, 0),
@@ -215,13 +215,13 @@ test "ifElse" {
     );
 
     const if_true = try func.flow(ally);
-    try if_true.op(ally, .{ .@"local.get" = func.param(1) });
+    try if_true.op(ally, .{ .local_get = func.param(1) });
 
     const if_false = try func.flow(ally);
-    try if_false.op(ally, .{ .@"local.get" = func.param(2) });
+    try if_false.op(ally, .{ .local_get = func.param(2) });
 
     const entry = func.entry();
-    try entry.op(ally, .{ .@"local.get" = func.param(0) });
+    try entry.op(ally, .{ .local_get = func.param(0) });
     try entry.op(ally, .{
         .@"if" = .{
             .type = .i32,

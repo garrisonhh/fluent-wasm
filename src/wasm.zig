@@ -12,6 +12,26 @@ pub const FlowRef = com.Ref(.wasm_controlflow, 32);
 pub const Type = wasm3.ValueType;
 pub const Value = wasm3.Value;
 
+const IntBackingType = @typeInfo(Type).Enum.tag_type;
+
+pub const IntType = enum(IntBackingType) {
+    i32 = @intFromEnum(Type.i32),
+    i64 = @intFromEnum(Type.i64),
+
+    pub fn into(self: IntType) Type {
+        return @enumFromInt(@intFromEnum(self));
+    }
+};
+
+pub const FloatType = enum(IntBackingType) {
+    f32 = @intFromEnum(Type.f32),
+    f64 = @intFromEnum(Type.f64),
+
+    pub fn into(self: FloatType) Type {
+        return @enumFromInt(@intFromEnum(self));
+    }
+};
+
 pub const Bytes = enum {
     @"8",
     @"16",
@@ -39,26 +59,16 @@ pub const Op = union(enum) {
     const Self = @This();
     pub const Code = std.meta.Tag(Self);
 
+    pub const IntOp = struct {
+        signed: std.builtin.Signedness,
+        type: Type,
+    };
+
     pub const If = struct {
         /// TODO represent function type sigs?
         type: ?Type,
         if_true: FlowRef,
         if_false: ?FlowRef,
-    };
-
-    pub const Load = struct {
-        dst: Local,
-        bytes: Bytes,
-    };
-
-    pub const Store = struct {
-        src: Local,
-        bytes: Bytes,
-    };
-
-    pub const Oneway = struct {
-        dst: Local,
-        src: Local,
     };
 
     // basic
@@ -77,23 +87,22 @@ pub const Op = union(enum) {
     // select,
 
     // intrinsic
-    @"memory.size",
-    @"memory.grow": u32,
+    // memory_size,
+    // memory_grow: u32,
 
     // vars
-    @"local.get": Local,
-    @"local.set": Local,
-    @"local.tee": Local,
-    @"global.get": Global,
-    @"global.set": Global,
+    local_get: Local,
+    local_set: Local,
+    local_tee: Local,
+    global_get: Global,
+    global_set: Global,
 
     // value manipulation
     @"const": Value,
-    load: Load,
-    store: Store,
+    // load,
+    // store,
 
-    // comparison operators
-    eqz: Type,
+    // comparisons
     eq: Type,
     ne: Type,
     lt: Type,
@@ -101,17 +110,15 @@ pub const Op = union(enum) {
     le: Type,
     ge: Type,
 
-    // arithmetic operators
+    // arithmetic
     add: Type,
     sub: Type,
     mul: Type,
-    div: Type,
-    rem: Type,
 
     // logic
-    @"and",
-    @"or",
-    xor,
+    @"and": IntType,
+    @"or": IntType,
+    xor: IntType,
 
     // bit twiddling
     // ctz: Local,
@@ -122,7 +129,14 @@ pub const Op = union(enum) {
     // rotl: Local,
     // rotr: Local,
 
+    // int-specific
+    // eqz: IntType,
+    // idiv: IntOp,
+    // irem: IntOp,
+
     // float-specific
+    // fdiv: FloatType,
+    // frem: FloatType,
     // abs: FloatType,
     // neg: FloatType,
     // ceil: FloatType,
@@ -134,9 +148,10 @@ pub const Op = union(enum) {
     // copysign: FloatType,
 
     // conversions
-    /// as lossless as possible
-    convert: Oneway,
-    reinterpret: Oneway,
+    // /// as lossless as possible between reprs
+    // convert,
+    // /// bitcast
+    // reinterpret,
 };
 
 pub const Module = struct {

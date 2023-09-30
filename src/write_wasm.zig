@@ -2,13 +2,13 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const RawOpcode = std.wasm.Opcode;
 const wasm = @import("wasm.zig");
 const Module = wasm.Module;
 const Function = wasm.Function;
 const Op = wasm.Op;
 const Local = wasm.Local;
 const FlowRef = wasm.FlowRef;
-const RawOpcode = @import("raw_opcodes.zig").RawOpcode;
 
 const wasm_magic_bytes: [4]u8 = .{0} ++ "asm".*;
 const wasm_version: u32 = 0x1;
@@ -241,6 +241,39 @@ fn writeRawOp(ro: RawOpcode, writer: anytype) @TypeOf(writer).Error!void {
     try writeEnum(RawOpcode, ro, writer);
 }
 
+fn convertOpcode(opcode: wasm.Op.Code) RawOpcode {
+    const name = @tagName(opcode);
+    return std.meta.stringToEnum(RawOpcode, name) orelse {
+        if (builtin.mode == .Debug) {
+            std.debug.panic("`{s}` is not a valid raw opcode", .{name});
+        } else unreachable;
+    };
+}
+
+fn convertTypedOpcode(t: wasm.Type, opcode: wasm.Op.Code) RawOpcode {
+    // minimum required buffer for writing ops with std.fmt.bufPrint
+    const buf_size = comptime sz: {
+        var max_len = 0;
+        for (std.enums.values(RawOpcode)) |tag| {
+            max_len = @max(max_len, @tagName(tag).len);
+        }
+        break :sz max_len;
+    };
+    var buf: [buf_size]u8 = undefined;
+
+    const name = std.fmt.bufPrint(
+        &buf,
+        "{s}_{s}",
+        .{@tagName(t), @tagName(opcode)},
+    ) catch unreachable;
+
+    return std.meta.stringToEnum(RawOpcode, name) orelse {
+        if (builtin.mode == .Debug) {
+            std.debug.panic("`{s}` is not a valid raw opcode", .{name});
+        } else unreachable;
+    };
+}
+
 fn writeOp(
     function: *const Function,
     op: Op,
@@ -251,8 +284,8 @@ fn writeOp(
         inline .@"unreachable",
         .nop,
         .@"return",
-        => |_, tag| {
-            try writeRawOp(std.enums.nameCast(RawOpcode, tag), writer);
+        => |_, opcode| {
+            try writeRawOp(convertOpcode(opcode), writer);
         },
 
         .@"if" => |meta| {
@@ -274,13 +307,12 @@ fn writeOp(
             try writeRawOp(.end, writer);
         },
 
-        .@"local.get", .@"local.set" => |local| {
-            const raw_op = std.meta.stringToEnum(RawOpcode, @tagName(op)).?;
-            try writeRawOp(raw_op, writer);
+        .local_get, .local_set => |local| {
+            try writeRawOp(convertOpcode(op), writer);
             try writeInt(u32, local.index, writer);
         },
 
-        // operators which extrapolate from a type
+        // operators which abstract over a type
         .eq,
         .ne,
         .lt,
@@ -291,15 +323,16 @@ fn writeOp(
         .sub,
         .mul,
         => |t| {
-            const raw_op = switch (op) {
-                inline else => |_, opcode| switch (t) {
-                    inline .i32, .i64, .f32, .f64 => |type_tag| std.meta.stringToEnum(
-                        RawOpcode,
-                        @tagName(type_tag) ++ "." ++ @tagName(opcode),
-                    ).?,
-                },
-            };
+            const raw_op = convertTypedOpcode(t, op);
+            try writeRawOp(raw_op, writer);
+        },
 
+        // int-only operators which abstract over a type
+        .@"and",
+        .@"or",
+        .xor,
+        => |t| {
+            const raw_op = convertTypedOpcode(t.into(), op);
             try writeRawOp(raw_op, writer);
         },
 
