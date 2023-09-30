@@ -18,6 +18,14 @@ pub const IntType = enum(IntBackingType) {
     i32 = @intFromEnum(Type.i32),
     i64 = @intFromEnum(Type.i64),
 
+    pub fn from(t: Type) ?IntType {
+        return switch (t) {
+            .i32 => .i32,
+            .i64 => .i64,
+            else => null,
+        };
+    }
+
     pub fn into(self: IntType) Type {
         return @enumFromInt(@intFromEnum(self));
     }
@@ -26,6 +34,14 @@ pub const IntType = enum(IntBackingType) {
 pub const FloatType = enum(IntBackingType) {
     f32 = @intFromEnum(Type.f32),
     f64 = @intFromEnum(Type.f64),
+
+    pub fn from(t: Type) ?FloatType {
+        return switch (t) {
+            .f32 => .f32,
+            .f64 => .f64,
+            else => null,
+        };
+    }
 
     pub fn into(self: FloatType) Type {
         return @enumFromInt(@intFromEnum(self));

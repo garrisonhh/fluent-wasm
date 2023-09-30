@@ -8,6 +8,23 @@ const stderr = std.io.getStdErr().writer();
 const Allocator = std.mem.Allocator;
 const wasm = @This();
 
+const save_dir = "compiled_tests";
+
+fn saveBytecode(
+    bytecode: []const u8,
+    comptime name_fmt: []const u8,
+    name_args: anytype,
+) !void {
+    const ally = std.testing.allocator;
+    const name = try std.fmt.allocPrint(ally, name_fmt ++ ".wasm", name_args);
+    defer ally.free(name);
+
+    const cwd = std.fs.cwd();
+    try cwd.makePath(save_dir);
+    const dir = try cwd.openDir(save_dir, .{});
+    try dir.writeFile(name, bytecode);
+}
+
 test "nop" {
     const ally = std.testing.allocator;
 
@@ -22,6 +39,8 @@ test "nop" {
 
     const bytecode = try module.compile(ally);
     defer ally.free(bytecode);
+
+    try saveBytecode(bytecode, "nop", .{});
 
     const results = try wasm.callExport(ally, bytecode, func_name, &.{});
     defer ally.free(results);
@@ -77,39 +96,30 @@ const HomogenousBinaryOpTest = struct {
 
         const bin_op = switch (self.opcode) {
             inline else => |tag| o: {
-                const tagname = @tagName(tag);
-                var op = @unionInit(wasm.Op, tagname, undefined);
+                const OpFieldEnum = std.meta.FieldEnum(wasm.Op);
+                const field_tag = comptime std.enums.nameCast(OpFieldEnum, tag);
+                const field_name = @tagName(tag);
 
-                if (@TypeOf(@field(op, tagname)) != wasm.Type) {
-                    unreachable;
-                }
+                break :o switch (std.meta.FieldType(wasm.Op, field_tag)) {
+                    wasm.Type => @unionInit(wasm.Op, field_name, t),
 
-                @field(op, tagname) = t;
+                    wasm.IntType,
+                    wasm.FloatType,
+                    => |T| @unionInit(wasm.Op, field_name, T.from(t).?),
 
-                break :o op;
+                    else => unreachable,
+                };
             },
         };
         try entry.op(ally, bin_op);
 
-        // save bytecode for debugging
         const bytecode = try module.compile(ally);
         defer ally.free(bytecode);
 
-        var buf: [64]u8 = undefined;
-        const wasm_name = try std.fmt.bufPrint(
-            &buf,
-            "{s}_{s}.wasm",
-            .{
-                @tagName(self.opcode),
-                @tagName(self.cases[0].out),
-            },
-        );
-
-        const dir_name = "compiled_tests";
-
-        try std.fs.cwd().makePath(dir_name);
-        const out_dir = try std.fs.cwd().openDir(dir_name, .{});
-        try out_dir.writeFile(wasm_name, bytecode);
+        try saveBytecode(bytecode, "{s}_{s}", .{
+            @tagName(self.opcode),
+            @tagName(self.cases[0].out),
+        });
 
         // run cases
         for (self.cases) |case| {
@@ -180,6 +190,39 @@ test HomogenousBinaryOpTest {
             case(.i32, max_i32, max_i32, 0),
             case(.i32, min_i32, min_i32, 0),
         }),
+        suite(.mul, &.{
+            case(.i32, 0, 0, 0),
+            case(.i32, 3, 4, 12),
+            case(.i32, 5, -2, -10),
+            case(.i32, max_i32, 1, max_i32),
+            case(.i32, 1, min_i32, min_i32),
+            case(.i32, min_i32 / 2, 2, min_i32),
+        }),
+        suite(.@"and", &.{
+            case(.i32, 0, 0, 0),
+            case(.i32, 0, 1, 0),
+            case(.i32, 1, 0, 0),
+            case(.i32, 1, 1, 1),
+            case(.i32, 0b01, 0b10, 0b00),
+            case(.i32, 0b11, 0b10, 0b10),
+        }),
+        suite(.@"or", &.{
+            case(.i32, 0, 0, 0),
+            case(.i32, 0, 1, 1),
+            case(.i32, 1, 0, 1),
+            case(.i32, 1, 1, 1),
+            case(.i32, 0b01, 0b10, 0b11),
+            case(.i32, 0b00, 0b10, 0b10),
+        }),
+        suite(.xor, &.{
+            case(.i32, 0, 0, 0),
+            case(.i32, 0, 1, 1),
+            case(.i32, 1, 0, 1),
+            case(.i32, 1, 1, 0),
+            case(.i32, 0b01, 0b10, 0b11),
+            case(.i32, 0b00, 0b10, 0b10),
+            case(.i32, 0b11, 0b10, 0b01),
+        }),
 
         suite(.add, &.{
             case(.i64, 0, 0, 0),
@@ -194,6 +237,39 @@ test HomogenousBinaryOpTest {
             case(.i64, 1, 2, -1),
             case(.i64, max_i64, max_i64, 0),
             case(.i64, min_i64, min_i64, 0),
+        }),
+        suite(.mul, &.{
+            case(.i64, 0, 0, 0),
+            case(.i64, 3, 4, 12),
+            case(.i64, 5, -2, -10),
+            case(.i64, max_i64, 1, max_i64),
+            case(.i64, 1, min_i64, min_i64),
+            case(.i64, min_i64 / 2, 2, min_i64),
+        }),
+        suite(.@"and", &.{
+            case(.i64, 0, 0, 0),
+            case(.i64, 0, 1, 0),
+            case(.i64, 1, 0, 0),
+            case(.i64, 1, 1, 1),
+            case(.i64, 0b01, 0b10, 0b00),
+            case(.i64, 0b11, 0b10, 0b10),
+        }),
+        suite(.@"or", &.{
+            case(.i64, 0, 0, 0),
+            case(.i64, 0, 1, 1),
+            case(.i64, 1, 0, 1),
+            case(.i64, 1, 1, 1),
+            case(.i64, 0b01, 0b10, 0b11),
+            case(.i64, 0b00, 0b10, 0b10),
+        }),
+        suite(.xor, &.{
+            case(.i64, 0, 0, 0),
+            case(.i64, 0, 1, 1),
+            case(.i64, 1, 0, 1),
+            case(.i64, 1, 1, 0),
+            case(.i64, 0b01, 0b10, 0b11),
+            case(.i64, 0b00, 0b10, 0b10),
+            case(.i64, 0b11, 0b10, 0b01),
         }),
     };
 
@@ -232,6 +308,8 @@ test "ifElse" {
 
     const bytecode = try module.compile(ally);
     defer ally.free(bytecode);
+
+    try saveBytecode(bytecode, "if_else", .{});
 
     {
         const params = [_]wasm.Value{
