@@ -141,7 +141,7 @@ const HomogenousBinaryOpTest = struct {
                     \\expected: {}
                     \\
                     \\
-                    ,
+                ,
                     .{
                         @tagName(self.opcode),
                         case.in[0],
@@ -353,8 +353,8 @@ fn expectFibonacci(
     in: i64,
     out: i64,
 ) !void {
-    const params = [_]wasm.Value{ .{ .i64 = in } };
-    const expected = [_]wasm.Value{ .{ .i64 = out } };
+    const params = [_]wasm.Value{.{ .i64 = in }};
+    const expected = [_]wasm.Value{.{ .i64 = out }};
 
     const results = try wasm.callExport(ally, bytecode, func_name, &params);
     defer ally.free(results);
@@ -379,7 +379,7 @@ test "fibonacci" {
     try entry.op(ally, .{ .local_get = func.param(0) });
     try entry.op(ally, .{ .@"const" = .{ .i64 = 1 } });
     try entry.op(ally, .{ .eq = .i64 });
-    try entry.op(ally, .{ .@"or" = .i32  });
+    try entry.op(ally, .{ .@"or" = .i32 });
 
     // true => 1
     const if_true = try func.flow(ally);

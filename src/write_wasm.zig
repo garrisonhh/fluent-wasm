@@ -225,7 +225,7 @@ fn convertTypedOpcode(t: wasm.Type, opcode: wasm.Op.Code) RawOpcode {
     const name = std.fmt.bufPrint(
         &buf,
         "{s}_{s}",
-        .{@tagName(t), @tagName(opcode)},
+        .{ @tagName(t), @tagName(opcode) },
     ) catch unreachable;
 
     return std.meta.stringToEnum(RawOpcode, name) orelse {
