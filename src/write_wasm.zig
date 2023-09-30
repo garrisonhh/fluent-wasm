@@ -55,50 +55,6 @@ const ExportDesc = enum(u8) {
 
 // utils =======================================================================
 
-/// write unsigned LEB128 format
-fn writeUIntLeb128(
-    comptime bits: comptime_int,
-    n: std.meta.Int(.unsigned, bits),
-    writer: anytype,
-) @TypeOf(writer).Error!void {
-    if (n == 0) {
-        try writer.writeByte(0);
-        return;
-    }
-
-    var x = n;
-    while (x > 0) {
-        var byte: u8 = @as(u7, @truncate(x));
-        x >>= 7;
-
-        if (x != 0) byte |= 0x80;
-        try writer.writeByte(byte);
-    }
-}
-
-/// write signed LEB128 format
-fn writeIntLeb128(
-    comptime bits: comptime_int,
-    n: std.meta.Int(.signed, bits),
-    writer: anytype,
-) @TypeOf(writer).Error!void {
-    var x = n;
-    var done = false;
-    while (!done) {
-        var byte: u8 = @as(u7, @truncate(x));
-        x >>= 7;
-
-        const signed_bit = @intFromBool(byte ^ 0x40 == 0);
-        if ((x == 0 and signed_bit) or (x == -1 and !signed_bit)) {
-            done = true;
-        } else {
-            byte |= 0x80;
-        }
-
-        try writer.writeByte(byte);
-    }
-}
-
 /// determines impl by signedness
 fn writeInt(
     comptime Int: type,
@@ -107,8 +63,8 @@ fn writeInt(
 ) @TypeOf(writer).Error!void {
     const info = @typeInfo(Int).Int;
     switch (info.signedness) {
-        .signed => try writeIntLeb128(info.bits, value, writer),
-        .unsigned => try writeUIntLeb128(info.bits, value, writer),
+        .signed => try std.leb.writeILEB128(writer, value),
+        .unsigned => try std.leb.writeULEB128(writer, value),
     }
 }
 
@@ -118,8 +74,13 @@ fn writeFloat(
     value: F,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
+    std.debug.assert(@typeInfo(F) == .Float);
+
     const UInt = std.meta.Int(.unsigned, @bitSizeOf(F));
-    try std.mem.writeIntLittle(UInt, @bitCast(value));
+    var buf: [@sizeOf(F)]u8 = undefined;
+    std.mem.writeIntLittle(UInt, &buf, @as(UInt, @bitCast(value)));
+
+    try writer.writeAll(&buf);
 }
 
 fn writeEnum(
@@ -307,9 +268,26 @@ fn writeOp(
             try writeRawOp(.end, writer);
         },
 
+        .call => |func_ref| {
+            try writeRawOp(.call, writer);
+            try writeInt(u32, func_ref.index, writer);
+        },
+
         .local_get, .local_set => |local| {
             try writeRawOp(convertOpcode(op), writer);
             try writeInt(u32, local.index, writer);
+        },
+
+        .@"const" => |value| {
+            const raw_op = convertTypedOpcode(value, .@"const");
+            try writeRawOp(raw_op, writer);
+
+            switch (value) {
+                .i32 => |n| try writeInt(i32, n, writer),
+                .i64 => |n| try writeInt(i64, n, writer),
+                .f32 => |n| try writeFloat(f32, n, writer),
+                .f64 => |n| try writeFloat(f64, n, writer),
+            }
         },
 
         // operators which abstract over a type
@@ -328,6 +306,7 @@ fn writeOp(
         },
 
         // int-only operators which abstract over a type
+        .eqz,
         .@"and",
         .@"or",
         .xor,

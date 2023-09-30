@@ -282,7 +282,7 @@ test "ifElse" {
     var module = wasm.Module{};
     defer module.deinit(ally);
 
-    const func_name = "testfn";
+    const func_name = "if_else";
     const func = try module.function(
         ally,
         func_name,
@@ -309,7 +309,7 @@ test "ifElse" {
     const bytecode = try module.compile(ally);
     defer ally.free(bytecode);
 
-    try saveBytecode(bytecode, "if_else", .{});
+    try saveBytecode(bytecode, func_name, .{});
 
     {
         const params = [_]wasm.Value{
@@ -343,5 +343,80 @@ test "ifElse" {
         defer ally.free(results);
 
         try std.testing.expectEqualSlices(wasm.Value, &expected, results);
+    }
+}
+
+fn expectFibonacci(
+    ally: Allocator,
+    bytecode: []const u8,
+    func_name: [:0]const u8,
+    in: i64,
+    out: i64,
+) !void {
+    const params = [_]wasm.Value{ .{ .i64 = in } };
+    const expected = [_]wasm.Value{ .{ .i64 = out } };
+
+    const results = try wasm.callExport(ally, bytecode, func_name, &params);
+    defer ally.free(results);
+
+    try std.testing.expectEqualSlices(wasm.Value, &expected, results);
+}
+
+test "fibonacci" {
+    const ally = std.testing.allocator;
+
+    var module = wasm.Module{};
+    defer module.deinit(ally);
+
+    const func_name = "fibonacci";
+    const func = try module.function(ally, func_name, &.{.i64}, &.{.i64});
+
+    const entry = func.entry();
+
+    // $0 == 0 || $0 == 1
+    try entry.op(ally, .{ .local_get = func.param(0) });
+    try entry.op(ally, .{ .eqz = .i64 });
+    try entry.op(ally, .{ .local_get = func.param(0) });
+    try entry.op(ally, .{ .@"const" = .{ .i64 = 1 } });
+    try entry.op(ally, .{ .eq = .i64 });
+    try entry.op(ally, .{ .@"or" = .i32  });
+
+    // true => 1
+    const if_true = try func.flow(ally);
+
+    try if_true.op(ally, .{ .@"const" = .{ .i64 = 1 } });
+
+    // false => fibonacci($0 - 1) + fibonacci($0 - 2)
+    const if_false = try func.flow(ally);
+
+    try if_false.op(ally, .{ .local_get = func.param(0) });
+    try if_false.op(ally, .{ .@"const" = .{ .i64 = 1 } });
+    try if_false.op(ally, .{ .sub = .i64 });
+    try if_false.op(ally, .{ .call = func.ref });
+
+    try if_false.op(ally, .{ .local_get = func.param(0) });
+    try if_false.op(ally, .{ .@"const" = .{ .i64 = 2 } });
+    try if_false.op(ally, .{ .sub = .i64 });
+    try if_false.op(ally, .{ .call = func.ref });
+
+    try if_false.op(ally, .{ .add = .i64 });
+
+    try entry.op(ally, .{
+        .@"if" = .{
+            .type = .i64,
+            .if_true = if_true.ref,
+            .if_false = if_false.ref,
+        },
+    });
+
+    const bytecode = try module.compile(ally);
+    defer ally.free(bytecode);
+
+    try saveBytecode(bytecode, func_name, .{});
+
+    const fibonacci = [_]i64{ 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89 };
+
+    for (fibonacci, 0..) |n, i| {
+        try expectFibonacci(ally, bytecode, func_name, @intCast(i), n);
     }
 }

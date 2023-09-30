@@ -97,7 +97,7 @@ pub const Op = union(enum) {
     // br_if,
     // br_table,
     @"return",
-    // call,
+    call: FuncRef,
     // call_indirect,
     // drop,
     // select,
@@ -146,7 +146,7 @@ pub const Op = union(enum) {
     // rotr: Local,
 
     // int-specific
-    // eqz: IntType,
+    eqz: IntType,
     // idiv: IntOp,
     // irem: IntOp,
 
