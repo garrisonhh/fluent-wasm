@@ -27,7 +27,6 @@ pub fn build(b: *std.Build) !void {
 
     lib.linkLibC();
     lib.linkLibrary(wasm3_lib);
-    try lib.include_dirs.appendSlice(wasm3_lib.include_dirs.items);
 
     b.installArtifact(lib);
 

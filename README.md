@@ -18,13 +18,12 @@ add to your build.zig.zon dependencies:
 add to your build.zig:
 ```zig
 const wasm_dep = b.dependency("fluent-wasm", .{});
-const wasm_mod = wasm3_dep.module("fluent-wasm");
-const wasm_lib = wasm3_dep.artifact("fluent-wasm");
+const wasm_mod = wasm_dep.module("fluent-wasm");
+const wasm_lib = wasm_dep.artifact("fluent-wasm");
 
 const exe = // ...
 
 exe.linkLibC();
 exe.linkLibrary(wasm_lib);
-try exe.include_dirs.appendSlice(wasm_lib.include_dirs.items);
 exe.addModule(wasm_mod);
 ```
