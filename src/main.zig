@@ -25,6 +25,93 @@ fn saveBytecode(
     try dir.writeFile(name, bytecode);
 }
 
+/// compile module, save bytecode with name, and return bytecode
+fn compileAndSave(
+    ally: Allocator,
+    module: *const wasm.Module,
+    comptime name_fmt: []const u8,
+    name_args: anytype,
+) ![]const u8 {
+    const bytecode = try module.compile(ally);
+    try saveBytecode(bytecode, name_fmt, name_args);
+
+    return bytecode;
+}
+
+fn valuesEql(a: []const wasm.Value, b: []const wasm.Value) bool {
+    if (a.len != b.len) return false;
+
+    for (a, b) |ea, eb| {
+        if (!ea.eql(eb)) return false;
+    }
+
+    return true;
+}
+
+const FormattableValues = struct {
+    values: []const wasm.Value,
+
+    pub fn format(
+        self: @This(),
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) @TypeOf(writer).Error!void{
+        try writer.writeByte('[');
+
+        for (self.values, 0..) |value, i| {
+            if (i > 0) try writer.writeAll(", ");
+            try value.format(&.{}, .{}, writer);
+        }
+
+        try writer.writeByte(']');
+    }
+};
+
+fn valuesFmt(values: []const wasm.Value) FormattableValues {
+    return .{ .values = values };
+}
+
+fn expectWasmResults(
+    func_name: [:0]const u8,
+    params: []const wasm.Value,
+    actual: []const wasm.Value,
+    expected: []const wasm.Value,
+) !void {
+    if (valuesEql(expected, actual)) return;
+
+    try stderr.print(
+        \\[error in test case]
+        \\called:   {s} {}
+        \\actual:   {}
+        \\expected: {}
+        \\
+        \\
+    ,
+        .{
+            func_name,
+            valuesFmt(params),
+            valuesFmt(actual),
+            valuesFmt(expected),
+        },
+    );
+}
+
+/// loads bytecode, calls the function, and expects that the results will be the
+/// same as provided
+fn expectCall(
+    ally: Allocator,
+    bytecode: []const u8,
+    func_name: [:0]const u8,
+    params: []const wasm.Value,
+    expected: []const wasm.Value,
+) !void {
+    const results = try wasm.callExport(ally, bytecode, func_name, params);
+    defer ally.free(results);
+
+    try expectWasmResults(func_name, params, results, expected);
+}
+
 test "nop" {
     const ally = std.testing.allocator;
 
@@ -40,12 +127,7 @@ test "nop" {
     const bytecode = try module.compile(ally);
     defer ally.free(bytecode);
 
-    try saveBytecode(bytecode, "nop", .{});
-
-    const results = try wasm.callExport(ally, bytecode, func_name, &.{});
-    defer ally.free(results);
-
-    try std.testing.expectEqualSlices(wasm.Value, &.{}, results);
+    try expectCall(ally, bytecode, func_name, &.{}, &.{});
 }
 
 const HomogenousBinaryOpTest = struct {
@@ -113,46 +195,14 @@ const HomogenousBinaryOpTest = struct {
         };
         try entry.op(ally, bin_op);
 
-        const bytecode = try module.compile(ally);
-        defer ally.free(bytecode);
-
-        try saveBytecode(bytecode, "{s}_{s}", .{
+        const bytecode = try compileAndSave(ally, &module, "{s}_{s}", .{
             @tagName(self.opcode),
             @tagName(self.cases[0].out),
         });
+        defer ally.free(bytecode);
 
-        // run cases
         for (self.cases) |case| {
-            const res = try wasm.callExport(
-                ally,
-                bytecode,
-                func_name,
-                &case.in,
-            );
-            defer ally.free(res);
-
-            const actual = res[0];
-
-            if (!actual.eql(case.out)) {
-                try stderr.print(
-                    \\[error in test case]
-                    \\called:   {s}({}, {})
-                    \\got:      {}
-                    \\expected: {}
-                    \\
-                    \\
-                ,
-                    .{
-                        @tagName(self.opcode),
-                        case.in[0],
-                        case.in[1],
-                        actual,
-                        case.out,
-                    },
-                );
-
-                return error.TestUnexpectedResult;
-            }
+            try expectCall(ally, bytecode, func_name, &case.in, &.{ case.out });
         }
     }
 };
@@ -306,60 +356,36 @@ test "ifElse" {
         },
     });
 
-    const bytecode = try module.compile(ally);
+    const bytecode = try compileAndSave(ally, &module, "{s}", .{func_name});
     defer ally.free(bytecode);
 
-    try saveBytecode(bytecode, func_name, .{});
-
-    {
-        const params = [_]wasm.Value{
+    try expectCall(
+        ally,
+        bytecode,
+        func_name,
+        &[_]wasm.Value{
             .{ .i32 = 0 },
             .{ .i32 = 82 },
             .{ .i32 = 420 },
-        };
-
-        const expected = [_]wasm.Value{
+        },
+        &[_]wasm.Value{
             .{ .i32 = 420 },
-        };
+        },
+    );
 
-        const results = try wasm.callExport(ally, bytecode, func_name, &params);
-        defer ally.free(results);
-
-        try std.testing.expectEqualSlices(wasm.Value, &expected, results);
-    }
-
-    {
-        const params = [_]wasm.Value{
+    try expectCall(
+        ally,
+        bytecode,
+        func_name,
+        &[_]wasm.Value{
             .{ .i32 = 1 },
             .{ .i32 = 82 },
             .{ .i32 = 420 },
-        };
-
-        const expected = [_]wasm.Value{
+        },
+        &[_]wasm.Value{
             .{ .i32 = 82 },
-        };
-
-        const results = try wasm.callExport(ally, bytecode, func_name, &params);
-        defer ally.free(results);
-
-        try std.testing.expectEqualSlices(wasm.Value, &expected, results);
-    }
-}
-
-fn expectFibonacci(
-    ally: Allocator,
-    bytecode: []const u8,
-    func_name: [:0]const u8,
-    in: i64,
-    out: i64,
-) !void {
-    const params = [_]wasm.Value{.{ .i64 = in }};
-    const expected = [_]wasm.Value{.{ .i64 = out }};
-
-    const results = try wasm.callExport(ally, bytecode, func_name, &params);
-    defer ally.free(results);
-
-    try std.testing.expectEqualSlices(wasm.Value, &expected, results);
+        },
+    );
 }
 
 test "fibonacci" {
@@ -409,14 +435,18 @@ test "fibonacci" {
         },
     });
 
-    const bytecode = try module.compile(ally);
+    const bytecode = try compileAndSave(ally, &module, "{s}", .{func_name});
     defer ally.free(bytecode);
-
-    try saveBytecode(bytecode, func_name, .{});
 
     const fibonacci = [_]i64{ 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89 };
 
     for (fibonacci, 0..) |n, i| {
-        try expectFibonacci(ally, bytecode, func_name, @intCast(i), n);
+        try wasm.expectCall(
+            ally,
+            bytecode,
+            func_name,
+            &[_]wasm.Value{.{ .i64 = @intCast(i) }},
+            &[_]wasm.Value{.{ .i64 = n }},
+        );
     }
 }
