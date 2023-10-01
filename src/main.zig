@@ -462,3 +462,38 @@ test "fibonacci" {
         );
     }
 }
+
+var toggled: bool = false;
+
+fn toggle(_: wasm.Runtime, _: []const wasm.Value, _: []wasm.Value) void {
+    toggled = !toggled;
+}
+
+test "callNative" {
+    const ally = std.testing.allocator;
+
+    var module = wasm.Module{};
+    defer module.deinit(ally);
+
+    const native = try module.import(ally, "zig", "toggle", &.{}, &.{});
+
+    const func_name = "call_native";
+    const func = try module.function(ally, func_name, &.{}, &.{});
+
+    const entry = func.entry();
+    try entry.op(ally, .{ .call = native.ref });
+
+    const bytecode = try compileAndSave(ally, &module, "{s}", .{func_name});
+    defer ally.free(bytecode);
+
+    var hooker = wasm.Hooker.init(bytecode, &.{
+        .{ .meta = native, .ptr = &toggle },
+    }) catch |e| std.debug.panic("err: {}\n", .{e});
+    defer hooker.deinit();
+
+    try std.testing.expect(!toggled);
+    ally.free(try hooker.call(ally, func_name, &.{}));
+    try std.testing.expect(toggled);
+    ally.free(try hooker.call(ally, func_name, &.{}));
+    try std.testing.expect(!toggled);
+}

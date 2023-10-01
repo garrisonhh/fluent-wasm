@@ -46,7 +46,7 @@ const ValType = enum(u8) {
     }
 };
 
-const ExportDesc = enum(u8) {
+const LinkDesc = enum(u8) {
     func = 0,
     table = 1,
     mem = 2,
@@ -98,16 +98,18 @@ fn writeName(name: []const u8, writer: anytype) @TypeOf(writer).Error!void {
 
 fn writeSectionHeader(
     section: Section,
-    size_guesstimate: u32,
+    size: u32,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
     try writeEnum(Section, section, writer);
-    try writeInt(u32, size_guesstimate, writer);
+    try writeInt(u32, size, writer);
 }
 
-/// wraps a section impl in a function that handles the section header
-fn writeSection(
+/// wraps a section impl in a function that handles the section header and the
+/// vec count
+fn writeVecSection(
     module: *const Module,
+    count: u32,
     writer: anytype,
     section: Section,
     comptime wrapped: fn (
@@ -115,11 +117,58 @@ fn writeSection(
         writer: anytype,
     ) @TypeOf(writer).Error!void,
 ) @TypeOf(writer).Error!void {
+    if (count == 0) return;
+
     var counter = std.io.countingWriter(std.io.null_writer);
+    try writeInt(u32, count, counter.writer());
     try wrapped(module, counter.writer());
 
     try writeSectionHeader(section, @intCast(counter.bytes_written), writer);
+    try writeInt(u32, count, writer);
     try wrapped(module, writer);
+}
+
+/// calculates the number of functions that aren't imports
+fn countFunctions(module: *const Module) u32 {
+    var count: u32 = 0;
+    var func_iter = module.functions.iterator();
+    while (func_iter.next()) |anyfunc| {
+        if (anyfunc.* == .function) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+fn countImports(module: *const Module) u32 {
+    var count: u32 = 0;
+    var func_iter = module.functions.iterator();
+    while (func_iter.next()) |anyfunc| {
+        if (anyfunc.* == .import) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+fn countExports(module: *const Module) u32 {
+    var num_exports: u32 = 0;
+
+    var func_iter = module.functions.iterator();
+    while (func_iter.next()) |anyfunc| {
+        switch (anyfunc.*) {
+            .function => |func| {
+                if (func.name) |_| {
+                    num_exports += 1;
+                }
+            },
+            else => {},
+        }
+    }
+
+    return num_exports;
 }
 
 // =============================================================================
@@ -129,9 +178,6 @@ fn writeTypes(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const type_count = module.functions.count();
-    try writeInt(u32, @as(u32, @intCast(type_count)), writer);
-
     var func_iter = module.functions.iterator();
     while (func_iter.next()) |anyfunc| {
         try writer.writeByte(functype);
@@ -163,14 +209,29 @@ fn writeTypes(
     }
 }
 
+fn writeImports(
+    module: *const Module,
+    writer: anytype,
+) @TypeOf(writer).Error!void {
+    var funcs = module.functions.iterator();
+    while (funcs.next()) |anyfunc| {
+        switch (anyfunc.*) {
+            .import => |meta| {
+                try writeName(meta.module, writer);
+                try writeName(meta.name, writer);
+                try writeEnum(LinkDesc, .func, writer);
+                try writeInt(u32, meta.ref.index, writer);
+            },
+            else => {},
+        }
+    }
+}
+
 /// just maps functions to their indexed type
 fn writeFunctions(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const num_functions = countFunctions(module);
-    try writeInt(u32, @as(u32, @intCast(num_functions)), writer);
-
     var funcs = module.functions.iterator();
     while (funcs.next()) |anyfunc| {
         switch (anyfunc.*) {
@@ -181,53 +242,17 @@ fn writeFunctions(
     }
 }
 
-/// calculates the number of functions that aren't imports
-fn countFunctions(module: *const Module) usize {
-    var count: usize = 0;
-    var func_iter = module.functions.iterator();
-    while (func_iter.next()) |anyfunc| {
-        if (anyfunc.* == .function) {
-            count += 1;
-        }
-    }
-
-    return count;
-}
-
-fn countExports(module: *const Module) u32 {
-    var num_exports: u32 = 0;
-
-    var func_iter = module.functions.iterator();
-    while (func_iter.next()) |anyfunc| {
-        switch (anyfunc.*) {
-            .function => |func| {
-                if (func.name) |_| {
-                    num_exports += 1;
-                }
-            },
-            else => {},
-        }
-    }
-
-    return num_exports;
-}
-
 fn writeExports(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const num_exports = countExports(module);
-    if (num_exports == 0) return;
-
-    try writeInt(u32, num_exports, writer);
-
     var func_iter = module.functions.iterator();
     while (func_iter.next()) |anyfunc| {
         switch (anyfunc.*) {
             .function => |func| {
                 if (func.name) |name| {
                     try writeName(name, writer);
-                    try writeEnum(ExportDesc, .func, writer);
+                    try writeEnum(LinkDesc, .func, writer);
                     try writeInt(u32, func.ref.index, writer);
                 }
             },
@@ -399,9 +424,6 @@ fn writeCode(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const num_functions = countFunctions(module);
-    try writeInt(u32, @as(u32, @intCast(num_functions)), writer);
-
     var funcs = module.functions.iterator();
     while (funcs.next()) |anyfunc| {
         switch (anyfunc.*) {
@@ -421,10 +443,16 @@ pub fn write(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
+    const total_functions: u32 = @intCast(module.functions.count());
+    const num_functions = countFunctions(module);
+    const num_exports = countExports(module);
+    const num_imports = countImports(module);
+
     try writer.writeAll(&wasm_magic_bytes);
     try writer.writeIntLittle(u32, wasm_version);
-    try writeSection(module, writer, .type, writeTypes);
-    try writeSection(module, writer, .function, writeFunctions);
-    try writeSection(module, writer, .@"export", writeExports);
-    try writeSection(module, writer, .code, writeCode);
+    try writeVecSection(module, total_functions, writer, .type, writeTypes);
+    try writeVecSection(module, num_imports, writer, .import, writeImports);
+    try writeVecSection(module, num_functions, writer, .function, writeFunctions);
+    try writeVecSection(module, num_exports, writer, .@"export", writeExports);
+    try writeVecSection(module, num_functions, writer, .code, writeCode);
 }
