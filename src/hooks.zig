@@ -3,26 +3,66 @@ const Allocator = std.mem.Allocator;
 const wasm = @import("wasm.zig");
 const wasm3 = @import("wasm3");
 
-pub const CallExportError = wasm3.Function.CallAllocError;
+pub const NativeFunction = wasm3.RawFunction;
 
-/// load some wasm bytecode and call an exported function
-pub fn callExport(
-    ally: Allocator,
-    bytecode: []const u8,
-    name: [:0]const u8,
-    params: []const wasm.Value,
-) CallExportError![]const wasm.Value {
-    const env = wasm3.Environment.init();
-    defer env.deinit();
+pub const NativeImport = struct {
+    meta: *const wasm.Module.Import,
+    ptr: *const NativeFunction,
+};
 
-    const runtime = wasm3.Runtime.init(env, .{});
-    defer runtime.deinit();
+pub const WasmError = wasm3.Error;
+/// context for loading and running wasm code
+pub const Hooker = struct {
+    const Self = @This();
 
-    var module = try wasm3.Module.parse(env, bytecode);
-    defer module.deinit();
+    env: wasm3.Environment,
+    runtime: wasm3.Runtime,
+    module: wasm3.Module,
 
-    try runtime.load(&module);
+    pub fn init(
+        bytecode: []const u8,
+        imports: []const NativeImport,
+    ) WasmError!Self {
+        const env = wasm3.Environment.init();
+        const runtime = wasm3.Runtime.init(env, .{});
+        var module = try wasm3.Module.parse(env, bytecode);
 
-    const func = try runtime.findFunction(name);
-    return try func.callAlloc(ally, params);
-}
+        try runtime.load(&module);
+
+        for (imports) |import| {
+            const meta = import.meta;
+            try module.linkRawFunction(
+                meta.module,
+                meta.name,
+                meta.params,
+                meta.returns,
+                import.ptr,
+            );
+        }
+
+        return Self{
+            .env = env,
+            .runtime = runtime,
+            .module = module,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.module.deinit();
+        self.runtime.deinit();
+        self.env.deinit();
+    }
+
+    pub const CallError = wasm3.Function.CallAllocError;
+
+    /// call an exported function
+    pub fn call(
+        self: Self,
+        ally: Allocator,
+        name: [:0]const u8,
+        params: []const wasm.Value,
+    ) CallError![]const wasm.Value {
+        const func = try self.runtime.findFunction(name);
+        return try func.callAlloc(ally, params);
+    }
+};

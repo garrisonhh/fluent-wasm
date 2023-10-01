@@ -101,12 +101,12 @@ fn expectWasmResults(
 /// same as provided
 fn expectCall(
     ally: Allocator,
-    bytecode: []const u8,
+    hooker: wasm.Hooker,
     func_name: [:0]const u8,
     params: []const wasm.Value,
     expected: []const wasm.Value,
 ) !void {
-    const results = try wasm.callExport(ally, bytecode, func_name, params);
+    const results = try hooker.call(ally, func_name, params);
     defer ally.free(results);
 
     try expectWasmResults(func_name, params, results, expected);
@@ -127,7 +127,10 @@ test "nop" {
     const bytecode = try module.compile(ally);
     defer ally.free(bytecode);
 
-    try expectCall(ally, bytecode, func_name, &.{}, &.{});
+    var hooker = try wasm.Hooker.init(bytecode, &.{});
+    defer hooker.deinit();
+
+    try expectCall(ally, hooker, func_name, &.{}, &.{});
 }
 
 const HomogenousBinaryOpTest = struct {
@@ -201,8 +204,11 @@ const HomogenousBinaryOpTest = struct {
         });
         defer ally.free(bytecode);
 
+        var hooker = try wasm.Hooker.init(bytecode, &.{});
+        defer hooker.deinit();
+
         for (self.cases) |case| {
-            try expectCall(ally, bytecode, func_name, &case.in, &.{ case.out });
+            try expectCall(ally, hooker, func_name, &case.in, &.{ case.out });
         }
     }
 };
@@ -359,9 +365,12 @@ test "ifElse" {
     const bytecode = try compileAndSave(ally, &module, "{s}", .{func_name});
     defer ally.free(bytecode);
 
+    var hooker = try wasm.Hooker.init(bytecode, &.{});
+    defer hooker.deinit();
+
     try expectCall(
         ally,
-        bytecode,
+        hooker,
         func_name,
         &[_]wasm.Value{
             .{ .i32 = 0 },
@@ -375,7 +384,7 @@ test "ifElse" {
 
     try expectCall(
         ally,
-        bytecode,
+        hooker,
         func_name,
         &[_]wasm.Value{
             .{ .i32 = 1 },
@@ -438,12 +447,15 @@ test "fibonacci" {
     const bytecode = try compileAndSave(ally, &module, "{s}", .{func_name});
     defer ally.free(bytecode);
 
+    var hooker = try wasm.Hooker.init(bytecode, &.{});
+    defer hooker.deinit();
+
     const fibonacci = [_]i64{ 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89 };
 
     for (fibonacci, 0..) |n, i| {
         try wasm.expectCall(
             ally,
-            bytecode,
+            hooker,
             func_name,
             &[_]wasm.Value{.{ .i64 = @intCast(i) }},
             &[_]wasm.Value{.{ .i64 = n }},

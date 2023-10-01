@@ -115,9 +115,6 @@ fn writeSection(
         writer: anytype,
     ) @TypeOf(writer).Error!void,
 ) @TypeOf(writer).Error!void {
-    const num_functions = module.functions.count();
-    if (num_functions == 0) return;
-
     var counter = std.io.countingWriter(std.io.null_writer);
     try wrapped(module, counter.writer());
 
@@ -132,21 +129,35 @@ fn writeTypes(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const num_functions = module.functions.count();
-    try writeInt(u32, @as(u32, @intCast(num_functions)), writer);
+    const type_count = module.functions.count();
+    try writeInt(u32, @as(u32, @intCast(type_count)), writer);
 
     var func_iter = module.functions.iterator();
-    while (func_iter.next()) |func| {
+    while (func_iter.next()) |anyfunc| {
         try writer.writeByte(functype);
 
-        try writeInt(u32, @as(u32, @intCast(func.params.len)), writer);
-        for (func.params) |param| {
-            const vt = ValType.ofWasmType(func.typeOf(param));
-            try writeEnum(ValType, vt, writer);
+        switch (anyfunc.*) {
+            .function => |func| {
+                try writeInt(u32, @as(u32, @intCast(func.params.len)), writer);
+                for (func.params) |param| {
+                    const vt = ValType.ofWasmType(func.typeOf(param));
+                    try writeEnum(ValType, vt, writer);
+                }
+            },
+            .import => |imp| {
+                try writeInt(u32, @as(u32, @intCast(imp.params.len)), writer);
+                for (imp.params) |param| {
+                    try writeEnum(ValType, ValType.ofWasmType(param), writer);
+                }
+            },
         }
 
-        try writeInt(u32, @as(u32, @intCast(func.returns.len)), writer);
-        for (func.returns) |t| {
+        const returns = switch (anyfunc.*) {
+            inline else => |x| x.returns,
+        };
+
+        try writeInt(u32, @as(u32, @intCast(returns.len)), writer);
+        for (returns) |t| {
             try writeEnum(ValType, ValType.ofWasmType(t), writer);
         }
     }
@@ -157,22 +168,44 @@ fn writeFunctions(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const num_functions = module.functions.count();
+    const num_functions = countFunctions(module);
     try writeInt(u32, @as(u32, @intCast(num_functions)), writer);
 
     var funcs = module.functions.iterator();
-    while (funcs.next()) |func| {
-        try writeInt(u32, func.ref.index, writer);
+    while (funcs.next()) |anyfunc| {
+        switch (anyfunc.*) {
+            inline .function, .import => |meta| {
+                try writeInt(u32, meta.ref.index, writer);
+            },
+        }
     }
+}
+
+/// calculates the number of functions that aren't imports
+fn countFunctions(module: *const Module) usize {
+    var count: usize = 0;
+    var func_iter = module.functions.iterator();
+    while (func_iter.next()) |anyfunc| {
+        if (anyfunc.* == .function) {
+            count += 1;
+        }
+    }
+
+    return count;
 }
 
 fn countExports(module: *const Module) u32 {
     var num_exports: u32 = 0;
 
     var func_iter = module.functions.iterator();
-    while (func_iter.next()) |func| {
-        if (func.name) |_| {
-            num_exports += 1;
+    while (func_iter.next()) |anyfunc| {
+        switch (anyfunc.*) {
+            .function => |func| {
+                if (func.name) |_| {
+                    num_exports += 1;
+                }
+            },
+            else => {},
         }
     }
 
@@ -189,11 +222,16 @@ fn writeExports(
     try writeInt(u32, num_exports, writer);
 
     var func_iter = module.functions.iterator();
-    while (func_iter.next()) |func| {
-        if (func.name) |name| {
-            try writeName(name, writer);
-            try writeEnum(ExportDesc, .func, writer);
-            try writeInt(u32, func.ref.index, writer);
+    while (func_iter.next()) |anyfunc| {
+        switch (anyfunc.*) {
+            .function => |func| {
+                if (func.name) |name| {
+                    try writeName(name, writer);
+                    try writeEnum(ExportDesc, .func, writer);
+                    try writeInt(u32, func.ref.index, writer);
+                }
+            },
+            else => {},
         }
     }
 }
@@ -361,16 +399,21 @@ fn writeCode(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const num_functions = module.functions.count();
+    const num_functions = countFunctions(module);
     try writeInt(u32, @as(u32, @intCast(num_functions)), writer);
 
     var funcs = module.functions.iterator();
-    while (funcs.next()) |func| {
-        var counter = std.io.countingWriter(std.io.null_writer);
-        try writeFunctionCode(func, counter.writer());
+    while (funcs.next()) |anyfunc| {
+        switch (anyfunc.*) {
+            .function => |*func| {
+                var counter = std.io.countingWriter(std.io.null_writer);
+                try writeFunctionCode(func, counter.writer());
 
-        try writeInt(u32, @as(u32, @intCast(counter.bytes_written)), writer);
-        try writeFunctionCode(func, writer);
+                try writeInt(u32, @as(u32, @intCast(counter.bytes_written)), writer);
+                try writeFunctionCode(func, writer);
+            },
+            else => {},
+        }
     }
 }
 
