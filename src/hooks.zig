@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const wasm = @import("wasm.zig");
+const wasm = @import("main.zig");
 const wasm3 = @import("wasm3");
 
 /// forwarded for writing native functions
@@ -8,7 +8,7 @@ pub const Runtime = wasm3.Runtime;
 pub const NativeFunction = wasm3.RawFunction;
 
 pub const NativeImport = struct {
-    meta: *const wasm.Module.Import,
+    meta: *const wasm.Import,
     ptr: *const NativeFunction,
 };
 

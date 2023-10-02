@@ -3,7 +3,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const RawOpcode = std.wasm.Opcode;
-const wasm = @import("wasm.zig");
+const wasm = @import("main.zig");
 const Module = wasm.Module;
 const Function = wasm.Function;
 const Op = wasm.Op;
@@ -41,11 +41,12 @@ const ValType = enum(u8) {
     funcref = 0x70,
     externref = 0x6F,
 
-    fn ofWasmType(t: wasm.Type) ValType {
+    fn from(t: wasm.Type) ValType {
         return std.meta.stringToEnum(ValType, @tagName(t)).?;
     }
 };
 
+/// used for imports and exports
 const LinkDesc = enum(u8) {
     func = 0,
     table = 1,
@@ -128,31 +129,6 @@ fn writeVecSection(
     try wrapped(module, writer);
 }
 
-/// calculates the number of functions that aren't imports
-fn countFunctions(module: *const Module) u32 {
-    var count: u32 = 0;
-    var func_iter = module.functions.iterator();
-    while (func_iter.next()) |anyfunc| {
-        if (anyfunc.* == .function) {
-            count += 1;
-        }
-    }
-
-    return count;
-}
-
-fn countImports(module: *const Module) u32 {
-    var count: u32 = 0;
-    var func_iter = module.functions.iterator();
-    while (func_iter.next()) |anyfunc| {
-        if (anyfunc.* == .import) {
-            count += 1;
-        }
-    }
-
-    return count;
-}
-
 fn countExports(module: *const Module) u32 {
     var num_exports: u32 = 0;
 
@@ -178,33 +154,33 @@ fn writeTypes(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    var func_iter = module.functions.iterator();
-    while (func_iter.next()) |anyfunc| {
+    var entries = module.registry.iterator();
+    while (entries.next()) |entry| {
         try writer.writeByte(functype);
 
-        switch (anyfunc.*) {
+        switch (entry.*) {
             .function => |func| {
                 try writeInt(u32, @as(u32, @intCast(func.params.len)), writer);
                 for (func.params) |param| {
-                    const vt = ValType.ofWasmType(func.typeOf(param));
+                    const vt = ValType.from(func.typeOf(param));
                     try writeEnum(ValType, vt, writer);
                 }
             },
             .import => |imp| {
                 try writeInt(u32, @as(u32, @intCast(imp.params.len)), writer);
                 for (imp.params) |param| {
-                    try writeEnum(ValType, ValType.ofWasmType(param), writer);
+                    try writeEnum(ValType, ValType.from(param), writer);
                 }
             },
         }
 
-        const returns = switch (anyfunc.*) {
+        const returns = switch (entry.*) {
             inline else => |x| x.returns,
         };
 
         try writeInt(u32, @as(u32, @intCast(returns.len)), writer);
         for (returns) |t| {
-            try writeEnum(ValType, ValType.ofWasmType(t), writer);
+            try writeEnum(ValType, ValType.from(t), writer);
         }
     }
 }
@@ -213,17 +189,13 @@ fn writeImports(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    var funcs = module.functions.iterator();
-    while (funcs.next()) |anyfunc| {
-        switch (anyfunc.*) {
-            .import => |meta| {
-                try writeName(meta.module, writer);
-                try writeName(meta.name, writer);
-                try writeEnum(LinkDesc, .func, writer);
-                try writeInt(u32, meta.ref.index, writer);
-            },
-            else => {},
-        }
+    var imports = module.imports.valueIterator();
+    while (imports.next()) |ptr| {
+        const imp = ptr.*;
+        try writeName(imp.module, writer);
+        try writeName(imp.name, writer);
+        try writeEnum(LinkDesc, .func, writer);
+        try writeInt(u32, imp.ref.index, writer);
     }
 }
 
@@ -232,13 +204,12 @@ fn writeFunctions(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    var funcs = module.functions.iterator();
-    while (funcs.next()) |anyfunc| {
-        switch (anyfunc.*) {
-            inline .function, .import => |meta| {
-                try writeInt(u32, meta.ref.index, writer);
-            },
-        }
+    var entries = module.registry.iterator();
+    while (entries.next()) |entry| {
+        const ref = switch (entry.*) {
+            inline .function, .import => |meta| meta.ref,
+        };
+        try writeInt(u32, ref.index, writer);
     }
 }
 
@@ -246,18 +217,11 @@ fn writeExports(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    var func_iter = module.functions.iterator();
-    while (func_iter.next()) |anyfunc| {
-        switch (anyfunc.*) {
-            .function => |func| {
-                if (func.name) |name| {
-                    try writeName(name, writer);
-                    try writeEnum(LinkDesc, .func, writer);
-                    try writeInt(u32, func.ref.index, writer);
-                }
-            },
-            else => {},
-        }
+    var exports = module.exports.valueIterator();
+    while (exports.next()) |exp| {
+        try writeName(exp.name, writer);
+        try writeEnum(LinkDesc, .func, writer);
+        try writeInt(u32, exp.ref.index, writer);
     }
 }
 
@@ -316,7 +280,7 @@ fn writeOp(
             try writeRawOp(.@"if", writer);
 
             if (meta.type) |t| {
-                try writeEnum(ValType, ValType.ofWasmType(t), writer);
+                try writeEnum(ValType, ValType.from(t), writer);
             } else {
                 try writer.writeByte(blocktype_empty);
             }
@@ -411,7 +375,7 @@ fn writeFunctionCode(
     try writeInt(u32, @as(u32, @intCast(real_locals)), writer);
     while (locals.next()) |t| {
         try writeInt(u32, 1, writer);
-        try writeEnum(ValType, ValType.ofWasmType(t.*), writer);
+        try writeEnum(ValType, ValType.from(t.*), writer);
     }
 
     // structured instrs
@@ -424,18 +388,14 @@ fn writeCode(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    var funcs = module.functions.iterator();
-    while (funcs.next()) |anyfunc| {
-        switch (anyfunc.*) {
-            .function => |*func| {
-                var counter = std.io.countingWriter(std.io.null_writer);
-                try writeFunctionCode(func, counter.writer());
+    var funcs = module.functions.valueIterator();
+    while (funcs.next()) |ptr| {
+        const func = ptr.*;
+        var counter = std.io.countingWriter(std.io.null_writer);
+        try writeFunctionCode(func, counter.writer());
 
-                try writeInt(u32, @as(u32, @intCast(counter.bytes_written)), writer);
-                try writeFunctionCode(func, writer);
-            },
-            else => {},
-        }
+        try writeInt(u32, @as(u32, @intCast(counter.bytes_written)), writer);
+        try writeFunctionCode(func, writer);
     }
 }
 
@@ -443,10 +403,10 @@ pub fn write(
     module: *const Module,
     writer: anytype,
 ) @TypeOf(writer).Error!void {
-    const total_functions: u32 = @intCast(module.functions.count());
-    const num_functions = countFunctions(module);
-    const num_exports = countExports(module);
-    const num_imports = countImports(module);
+    const total_functions: u32 = @intCast(module.registry.count());
+    const num_functions: u32 = @intCast(module.functions.count());
+    const num_exports: u32 = @intCast(module.exports.count());
+    const num_imports: u32 = @intCast(module.imports.count());
 
     try writer.writeAll(&wasm_magic_bytes);
     try writer.writeIntLittle(u32, wasm_version);

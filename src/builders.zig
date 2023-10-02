@@ -17,43 +17,66 @@ fn addSentinel(ally: Allocator, str: []const u8) Allocator.Error![:0]const u8 {
     return slice;
 }
 
+pub const Import = struct {
+    const Self = @This();
+
+    ref: FuncRef,
+    module: [:0]const u8,
+    name: [:0]const u8,
+    params: []const Type,
+    returns: []const Type,
+
+    fn deinit(self: Self, ally: Allocator) void {
+        ally.free(self.module);
+        ally.free(self.name);
+        ally.free(self.params);
+        ally.free(self.returns);
+    }
+};
+
+pub const Export = struct {
+    const Self = @This();
+
+    ref: FuncRef,
+    name: [:0]const u8,
+
+    fn deinit(self: Self, ally: Allocator) void {
+        ally.free(self.name);
+    }
+};
+
 pub const Module = struct {
     const Self = @This();
 
-    pub const Import = struct {
-        ref: FuncRef,
-        module: [:0]const u8,
-        name: [:0]const u8,
-        params: []const Type,
-        returns: []const Type,
-    };
-
-    const AnyFunction = union(enum) {
+    const FuncEntry = union(enum) {
         function: Function,
         import: Import,
     };
 
-    const FunctionMap = com.RefMap(FuncRef, AnyFunction);
+    const FuncRegistry = com.RefMap(FuncRef, FuncEntry);
 
-    functions: FunctionMap = .{},
+    /// owns the function/import data
+    registry: FuncRegistry = .{},
+    functions: std.AutoHashMapUnmanaged(FuncRef, *Function) = .{},
+    imports: std.AutoHashMapUnmanaged(FuncRef, *const Import) = .{},
+    exports: std.AutoHashMapUnmanaged(FuncRef, Export) = .{},
 
     pub fn deinit(self: *Self, ally: Allocator) void {
-        var func_iter = self.functions.iterator();
-        while (func_iter.next()) |anyfunc| {
-            switch (anyfunc.*) {
-                .function => |*func| {
-                    func.deinit(ally);
-                },
-                .import => |meta| {
-                    ally.free(meta.module);
-                    ally.free(meta.name);
-                    ally.free(meta.params);
-                    ally.free(meta.returns);
-                },
+        var entries = self.registry.iterator();
+        while (entries.next()) |entry| {
+            switch (entry.*) {
+                .function => |*func| func.deinit(ally),
+                .import => |imp| imp.deinit(ally),
             }
         }
 
+        self.registry.deinit(ally);
         self.functions.deinit(ally);
+        self.imports.deinit(ally);
+
+        var export_iter = self.exports.valueIterator();
+        while (export_iter.next()) |exp| exp.deinit(ally);
+        self.exports.deinit(ally);
     }
 
     pub const writeWasm = write_wasm.write;
@@ -80,7 +103,7 @@ pub const Module = struct {
         params: []const Type,
         returns: []const Type,
     ) Allocator.Error!*const Import {
-        const ref = try self.functions.new(ally);
+        const ref = try self.registry.new(ally);
 
         const final = Import{
             .ref = ref,
@@ -90,9 +113,12 @@ pub const Module = struct {
             .returns = try ally.dupe(Type, returns),
         };
 
-        try self.functions.set(ally, ref, .{ .import = final });
+        try self.registry.set(ally, ref, .{ .import = final });
 
-        return &self.functions.get(ref).import;
+        const ptr = &self.registry.get(ref).import;
+        try self.imports.put(ally, ref, ptr);
+
+        return ptr;
     }
 
     /// create a new function
@@ -100,12 +126,10 @@ pub const Module = struct {
     pub fn function(
         self: *Self,
         ally: Allocator,
-        name: ?[]const u8,
+        exported_name: ?[]const u8,
         params: []const Type,
         returns: []const Type,
     ) Allocator.Error!*Function {
-        const ref = try self.functions.new(ally);
-
         // local params
         var locals = Function.LocalMap{};
 
@@ -114,28 +138,37 @@ pub const Module = struct {
             slot.* = try locals.put(ally, param_type);
         }
 
-        // name
-        const owned_name: ?[:0]const u8 =
-            if (name) |got| try addSentinel(ally, got) else null;
-
         // entry flow
         var flows = Function.FlowMap{};
 
         const entry_ref = try flows.new(ally);
         flows.set(entry_ref, .{ .ref = entry_ref });
 
+        const ref = try self.registry.new(ally);
+
         const final = Function{
             .ref = ref,
-            .name = owned_name,
             .params = param_locals,
             .returns = try ally.dupe(Type, returns),
             .locals = locals,
             .flows = flows,
         };
 
-        try self.functions.set(ally, ref, .{ .function = final });
+        try self.registry.set(ally, ref, .{ .function = final });
 
-        return &self.functions.get(ref).function;
+        const ptr = &self.registry.get(ref).function;
+        try self.functions.put(ally, ref, ptr);
+
+        // export
+        if (exported_name) |name| {
+            const owned = try addSentinel(ally, name);
+            try self.exports.put(ally, ref, Export{
+                .ref = ref,
+                .name = owned,
+            });
+        }
+
+        return ptr;
     }
 };
 
@@ -146,15 +179,12 @@ pub const Function = struct {
     const FlowMap = com.RefList(FlowRef, Flow);
 
     ref: FuncRef,
-    /// if this isn't null, this function will be exported with this name
-    name: ?[:0]const u8,
     params: []const Local,
     returns: []const Type,
     locals: LocalMap,
     flows: FlowMap,
 
     fn deinit(self: *Self, ally: Allocator) void {
-        if (self.name) |name| ally.free(name);
         ally.free(self.params);
         ally.free(self.returns);
         self.locals.deinit(ally);
