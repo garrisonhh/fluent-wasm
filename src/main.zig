@@ -1,5 +1,6 @@
 pub usingnamespace @import("wasm.zig");
 pub usingnamespace @import("hooks.zig");
+pub usingnamespace @import("builders.zig");
 
 // tests =======================================================================
 
