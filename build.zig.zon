@@ -7,8 +7,8 @@
             .hash = "1220ff4d65e195a5932d15e2486c058c99a494445ae3eca398f2fc3a0807317b36c3",
         },
         .wasm3 = .{
-            .url = "https://github.com/garrisonhh/wasm3.zig/tarball/4bfac6ee8240b44d3a89cefebd570f2b21eab6e2",
-            .hash = "12208bbaf38a9082047e5edc411d14baf2685dcc3ba8a64b2bfdb0f27f861603fb5b",
+            .url = "https://github.com/garrisonhh/wasm3.zig/tarball/74afd678a0ff2d91474b6aa478f4a4427233e75d",
+            .hash = "12201d8755f07920c93bf5e7a546a9491fbd456797ead796688c70e040f5562bb78c",
         },
     },
 }

@@ -239,12 +239,15 @@ test HomogenousBinaryOpTest {
             case(.i32, max_i32 - 1, 1, max_i32),
             case(.i32, max_i32, min_i32, -1),
             case(.i32, min_i32, 0, min_i32),
+            case(.i32, max_i32, 1, min_i32),
+            case(.i32, max_i32, max_i32, -2),
         }),
         suite(.sub, &.{
             case(.i32, 0, 0, 0),
             case(.i32, 1, 2, -1),
             case(.i32, max_i32, max_i32, 0),
             case(.i32, min_i32, min_i32, 0),
+            case(.i32, max_i32, min_i32, -1),
         }),
         suite(.mul, &.{
             case(.i32, 0, 0, 0),
@@ -253,6 +256,7 @@ test HomogenousBinaryOpTest {
             case(.i32, max_i32, 1, max_i32),
             case(.i32, 1, min_i32, min_i32),
             case(.i32, min_i32 / 2, 2, min_i32),
+            case(.i32, max_i32, 32, -32),
         }),
         suite(.@"and", &.{
             case(.i32, 0, 0, 0),
@@ -287,12 +291,15 @@ test HomogenousBinaryOpTest {
             case(.i64, max_i64 - 1, 1, max_i64),
             case(.i64, max_i64, min_i64, -1),
             case(.i64, min_i64, 0, min_i64),
+            case(.i64, max_i64, 1, min_i64),
+            case(.i64, max_i64, max_i64, -2),
         }),
         suite(.sub, &.{
             case(.i64, 0, 0, 0),
             case(.i64, 1, 2, -1),
             case(.i64, max_i64, max_i64, 0),
             case(.i64, min_i64, min_i64, 0),
+            case(.i64, max_i64, min_i64, -1),
         }),
         suite(.mul, &.{
             case(.i64, 0, 0, 0),
@@ -301,6 +308,7 @@ test HomogenousBinaryOpTest {
             case(.i64, max_i64, 1, max_i64),
             case(.i64, 1, min_i64, min_i64),
             case(.i64, min_i64 / 2, 2, min_i64),
+            case(.i64, max_i64, 32, -32),
         }),
         suite(.@"and", &.{
             case(.i64, 0, 0, 0),
