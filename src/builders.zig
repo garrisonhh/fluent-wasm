@@ -79,19 +79,12 @@ pub const Module = struct {
         self.exports.deinit(ally);
     }
 
-    pub const writeWasm = write_wasm.write;
-
     /// compile a module to an allocated array of bytes
     pub fn compile(
         self: *const Self,
         ally: Allocator,
     ) Allocator.Error![]const u8 {
-        var code = std.ArrayList(u8).init(ally);
-        defer code.deinit();
-
-        try self.writeWasm(code.writer());
-
-        return try code.toOwnedSlice();
+        return try write_wasm.write(self, ally);
     }
 
     /// supply a native function definition to be imported from your zig code
